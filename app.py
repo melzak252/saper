@@ -1,5 +1,8 @@
 import asyncio
 from enum import Enum
+import os
+from pathlib import Path
+import time
 from typing import List, Tuple
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -9,11 +12,8 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select
+from selenium.common.exceptions import NoSuchElementException
 
-# Enable performance logging
-
-import time
-import math
 from random import choice, sample, choices
 from solver import LostException, MinesweeperSolver, WinException
 
@@ -54,15 +54,23 @@ class MineSweeperPlayer:
 
 
     def connect(self):
-
-
-        ser = Service(ChromeDriverManager().install())
+        ser = Service(executable_path="chromedriver-win64/chromedriver.exe")
         options = Options()
         options.add_argument("--no-sandbox")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
 
+        # Disable info bars like "Chrome is being controlled by automated test software"
+        options.add_argument("--disable-infobars")
+
+        # Optional: Disable notifications (e.g., requests to show notifications)
+        options.add_argument("--disable-notifications")
+        options.add_argument("--disable-search-engine-choice-screen")
+        
         # options.add_argument("--headless")
         self.driver = webdriver.Chrome(options=options, service=ser)
         self.driver.get('https://saper-online.pl/gra.php')
+        
 
         
     def log_request(self, intercepted_request):
@@ -71,12 +79,18 @@ class MineSweeperPlayer:
     def game_setup(self):
         self.connect()
         
+        try:
+            button = self.driver.find_element(By.CLASS_NAME, "fc-cta-consent")
+            button.click()
+        except NoSuchElementException:
+            pass
+        
         self.set_login()
         self.select_level()
         self.click_cookies()
         self.game = self.driver.find_element(By.ID, "Gra")
         board = self.to_board()
-        self.solver = MinesweeperSolver(board, GAME_LEVEL_SIZE[self.game_level], self.driver)
+        self.solver = MinesweeperSolver(board, GAME_LEVEL_SIZE[self.game_level], self.driver, GAME_LEVEL_MINES[self.game_level])
 
     def select_level(self):
         select = Select(self.driver.find_element(By.ID, "poziomValue"))
@@ -117,7 +131,7 @@ class MineSweeperPlayer:
     
         self.game = self.driver.find_element(By.ID, "Gra")
         board = self.to_board()
-        self.solver = MinesweeperSolver(board, GAME_LEVEL_SIZE[self.game_level], self.driver)
+        self.solver = MinesweeperSolver(board, GAME_LEVEL_SIZE[self.game_level], self.driver, GAME_LEVEL_MINES[self.game_level])
    
 
     def click_cookies(self):
@@ -147,22 +161,26 @@ class MineSweeperPlayer:
                     if moves:
                         for r, c in moves:
                             self.solver.click(r, c)
-                    else:
-                        moves = self.solver.find_safe_moves()
+                        continue
+                    
+                    moves = self.solver.find_safe_moves()
 
-                        if moves:
-                            for r, c in moves:
-                                self.solver.click(r, c)
-                        else:
-                                
-                            moves = self.solver.get_unmarked()
-                            if not moves:
-                                time_info = self.get_time_info()
-                                raise WinException(f"Wygrana w {time_info}s")
-
-                            r, c = choice(moves)
-                            
+                    if moves:
+                        for r, c in moves:
                             self.solver.click(r, c)
+                        continue
+                    
+                            
+                    moves = self.solver.probability()
+                    if not moves:
+                        time_info = self.get_time_info()
+                        raise WinException(f"Wygrana w {time_info}s")
+
+                    r, c = choice(moves)
+                    
+                    self.solver.click(r, c)
+
+                    
 
             except WinException as win:
                 print(win)
@@ -176,6 +194,9 @@ class MineSweeperPlayer:
                 print(f"Przegrałem w {time_info}")
 
                 if float(time_info) > 2.0:
+                    if not (d := Path("loses")).is_dir():
+                        d.mkdir()
+                        
                     self.solver.save_state(f"loses/lose_{loses}.txt")
                     loses += 1
                 self.new_game()
@@ -202,7 +223,7 @@ class MineSweeperPlayer:
             
 
 async def main():
-    player = MineSweeperPlayer(game_level=GameLevel.EXPERT, nick="Melzak", wins=100)
+    player = MineSweeperPlayer(game_level=GameLevel.EXPERT, nick="Melzak", wins=10)
 
     await player.solve()
 

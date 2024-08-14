@@ -19,12 +19,15 @@ class WinException(Exception):
     pass
 
 class MinesweeperSolver:
-    def __init__(self, board, board_size, driver):
+    def __init__(self, board, board_size, driver, mines: int):
         self.driver = driver
         self.raw_board: List[List[WebElement]] = board
         self.board: List[List[int | None]] = []
-        
+        self.mines = mines
+        self.mines_found = 0
         self.board_rows, self.board_cols = board_size
+        tiles = self.board_rows * self.board_cols
+        self.perc_board: List[List[float | None]] = [[mines / tiles for _ in range(self.board_cols)] for _ in range(self.board_rows)]
         self.reset()
         
     def reset(self):
@@ -44,6 +47,7 @@ class MinesweeperSolver:
                     if num > 0 and num == len(moves):
                         for r, c in moves:
                             self.board[r][c] = -1
+                            self.mines_found += 1
                     elif num == 0:
                         save_moves = save_moves | set(moves)
 
@@ -70,6 +74,59 @@ class MinesweeperSolver:
                     num -= 1
                     
         return num, possible_moves   
+    
+        
+    def surrounding_prob(self, row, col) -> Tuple[int, List[Tuple[int, int]]]:
+        num = self.board[row][col]
+        possible_moves = []
+        for i in range(-1, 2):
+            for j in range(-1, 2):
+                if (i == 0 and j == 0) or not (0 <= (row + i) < self.board_rows) or not (0 <= (col + j) < self.board_cols):
+                    continue
+                
+                val = self.board[row + i][col + j]
+                if val is None:
+                    possible_moves.append((row + i, col + j))
+
+                if val == -1:
+                    num -= 1
+                    
+        return num, possible_moves 
+    
+    def probability(self):
+        directions = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+        for i, row in enumerate(self.board):
+            for j, val in enumerate(row):
+                if val is not None:
+                    self.perc_board[i][j] = None
+                    continue
+                
+                bomb_count = 0
+                unknown_count = 0
+                for dr, dc in directions:
+                    nr, nc = i + dr, j + dc
+                    if not (0 <= nr < self.board_rows and 0 <= nc < self.board_cols) or self.board[nr][nc] is None or self.board[nr][nc] <= 0:
+                        continue
+                    
+                    n, moves = self.surrounding(nr, nc)
+                    bomb_count += n
+                    
+                    unknown_count += len(moves)
+                        
+                self.perc_board[i][j] = bomb_count / unknown_count if unknown_count else 1
+
+        min_prob = float('inf')
+        min_indices = []
+
+        for r, row in enumerate(self.perc_board):
+            for c, val in enumerate(row):
+                if val is not None and val < min_prob:
+                    min_prob = val
+                    min_indices = [(r, c)]
+                elif val == min_prob:
+                    min_indices.append((r, c))
+
+        return min_indices
 
     async def update_board(self):
         executor = ThreadPoolExecutor(max_workers=20)  # Adjust as necessary
